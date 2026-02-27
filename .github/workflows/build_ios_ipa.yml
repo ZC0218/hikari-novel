@@ -1,18 +1,18 @@
-name: Build
+name: Build Hikari Novel iOS IPA (Real Device Release)
 on:
-  push:
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发编译
 
 jobs:
-  build:
+  build-ios:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      # 新增：解压上传的源码压缩包（适配你的场景）
+      # 1. 解压源码压缩包（适配你的仓库）
       - name: Unzip Source Code
         run: |
-          # 找到仓库中唯一的 zip 文件
+          # 找到唯一的 zip 文件
           ZIP_FILE=$(find . -name "*.zip" -type f | head -1)
           if [ -z "$ZIP_FILE" ]; then
             echo "❌ No zip file found!"
@@ -23,16 +23,16 @@ jobs:
           # 解压到临时目录
           unzip -q "$ZIP_FILE" -d temp_unzip
           
-          # 找到解压后包含 .xcodeproj 或 .xcworkspace 的目录（即项目根）
-          PROJECT_ROOT=$(find temp_unzip -name "*.xcodeproj" -o -name "*.xcworkspace" | head -1 | xargs dirname)
+          # 找到解压后包含 pubspec.yaml 的目录（Flutter 项目根）
+          PROJECT_ROOT=$(find temp_unzip -name "pubspec.yaml" -type f | head -1 | xargs dirname)
           if [ -z "$PROJECT_ROOT" ]; then
-            echo "❌ No Xcode project found in zip!"
+            echo "❌ No pubspec.yaml found in zip!"
             exit 1
           fi
-          echo "✅ Found project root at: $PROJECT_ROOT"
+          echo "✅ Found Flutter project root at: $PROJECT_ROOT"
           
           # 把项目所有内容复制到工作目录根
-          cp -R "$PROJECT_ROOT"/* .
+          cp -R "$PROJECT_ROOT"/* ./
           
           # 删除临时目录
           rm -rf temp_unzip
@@ -41,18 +41,38 @@ jobs:
           echo "=== Final directory structure ==="
           ls -la
 
-      - name: Build
-        run: |
-          # 注意：把 "你的项目名" 替换成你项目中 scheme 的真实名称
-          xcodebuild -scheme "你的项目名" -configuration Release -archivePath build/app.xcarchive archive CODE_SIGNING_ALLOWED=NO
+      # 2. 安装 Flutter（匹配项目要求）
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: 'stable'
+          cache: true
 
+      # 3. 安装 iOS 依赖
+      - name: Install Dependencies
+        run: |
+          flutter pub get
+          cd ios
+          pod install --repo-update
+          cd ..
+
+      # 4. 编译真实设备 Release 版（无签名）
+      - name: Build iOS Release (Real Device)
+        run: |
+          flutter build ios --release --no-simulator --arch arm64 --no-codesign
+
+      # 5. 打包成 IPA（使用你提供的精简方式）
       - name: Export IPA
         run: |
           mkdir -p Payload
-          cp -r build/app.xcarchive/Products/Applications/*.app Payload/
-          zip -r app.ipa Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r hikari-novel-real-device.ipa Payload
+          rm -rf Payload
 
-      - uses: actions/upload-artifact@v4
+      # 6. 上传 IPA 产物
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
         with:
-          name: IPA
-          path: app.ipa
+          name: hikari-novel-ios-real-device
+          path: hikari-novel-real-device.ipa
