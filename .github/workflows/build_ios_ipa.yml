@@ -1,22 +1,18 @@
-name: Build iOS IPA from Zip (Final Fixed)
+name: Build
 on:
+  push:
   workflow_dispatch:
 
 jobs:
-  build-ipa:
+  build:
     runs-on: macos-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # 1. 先打印当前目录结构，确认压缩包位置
-      - name: Debug - List initial files
-        run: ls -la
-
-      # 2. 解压并把源码放到根目录
-      - name: Unzip and move source to root
+      # 新增：解压上传的源码压缩包（适配你的场景）
+      - name: Unzip Source Code
         run: |
-          # 找到唯一的 zip 文件
+          # 找到仓库中唯一的 zip 文件
           ZIP_FILE=$(find . -name "*.zip" -type f | head -1)
           if [ -z "$ZIP_FILE" ]; then
             echo "❌ No zip file found!"
@@ -27,10 +23,10 @@ jobs:
           # 解压到临时目录
           unzip -q "$ZIP_FILE" -d temp_unzip
           
-          # 找到解压后包含 pubspec.yaml 的目录（即项目根）
-          PROJECT_ROOT=$(find temp_unzip -name "pubspec.yaml" -type f | head -1 | xargs dirname)
+          # 找到解压后包含 .xcodeproj 或 .xcworkspace 的目录（即项目根）
+          PROJECT_ROOT=$(find temp_unzip -name "*.xcodeproj" -o -name "*.xcworkspace" | head -1 | xargs dirname)
           if [ -z "$PROJECT_ROOT" ]; then
-            echo "❌ No pubspec.yaml found in zip!"
+            echo "❌ No Xcode project found in zip!"
             exit 1
           fi
           echo "✅ Found project root at: $PROJECT_ROOT"
@@ -41,50 +37,22 @@ jobs:
           # 删除临时目录
           rm -rf temp_unzip
           
-          # 打印最终目录结构，确认 ios 目录存在
+          # 打印最终目录结构，确认项目文件存在
           echo "=== Final directory structure ==="
           ls -la
-          if [ -d "ios" ]; then
-            echo "✅ ios directory found"
-          else
-            echo "❌ ios directory NOT found!"
-            exit 1
-          fi
 
-      - name: Setup Flutter 3.19.0
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.38.5'
-          channel: 'stable'
-          cache: true
-
-      # 3. 安装依赖，确保在正确目录执行 pod install
-      - name: Install Dependencies
+      - name: Build
         run: |
-          flutter pub get
-          
-          # 进入 ios 目录执行 pod install
-          cd ios
-          echo "Current directory: $(pwd)"
-          ls -la  # 确认 Podfile 存在
-          pod install --repo-update
-          cd ..
+          # 注意：把 "你的项目名" 替换成你项目中 scheme 的真实名称
+          xcodebuild -scheme "你的项目名" -configuration Release -archivePath build/app.xcarchive archive CODE_SIGNING_ALLOWED=NO
 
-      # 4. 编译 iOS 模拟器版
-      - name: Build iOS Simulator App
-        run: flutter build ios --debug --simulator --verbose
-
-      # 5. 打包成 IPA
-      - name: Package to IPA
+      - name: Export IPA
         run: |
-          mkdir -p ipa_output
-          ditto -c -k --sequesterRsrc --keepParent \
-            build/ios/iphonesimulator/Runner.app \
-            ipa_output/hikari-novel-simulator.ipa
+          mkdir -p Payload
+          cp -r build/app.xcarchive/Products/Applications/*.app Payload/
+          zip -r app.ipa Payload
 
-      # 6. 上传产物
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: hikari-novel-ios-ipa
-          path: ipa_output/*.ipa
+          name: IPA
+          path: app.ipa
