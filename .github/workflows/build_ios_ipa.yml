@@ -45,7 +45,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.38.5'
+          flutter-version: '3.19.0'
           channel: 'stable'
           cache: true
 
@@ -57,10 +57,10 @@ jobs:
           pod install --repo-update
           cd ..
 
-      # 4. 编译真实设备 Release 版（无签名）
+      # 4. 编译真实设备 Release 版（修复：移除了 --arch 参数）
       - name: Build iOS Release (Real Device)
         run: |
-          flutter build ios --release --no-simulator --arch arm64 --no-codesign
+          flutter build ios --release --no-simulator --no-codesign
 
       # 5. 打包成 IPA（使用你提供的精简方式）
       - name: Export IPA
