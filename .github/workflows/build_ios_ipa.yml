@@ -1,88 +1,90 @@
-name: Build iOS IPA from Zip (Fixed)
+name: Build iOS IPA from Zip (Final Fixed)
 on:
-  workflow_dispatch:  # 仅手动触发
+  workflow_dispatch:
 
 jobs:
   build-ipa:
     runs-on: macos-latest
     steps:
-      # 1. 检出仓库（含上传的压缩包）
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. 自动解压压缩包（优化：避免路径混乱）
-      - name: Unzip Source Code (Fixed)
+      # 1. 先打印当前目录结构，确认压缩包位置
+      - name: Debug - List initial files
+        run: ls -la
+
+      # 2. 解压并把源码放到根目录
+      - name: Unzip and move source to root
         run: |
-          # 找到唯一的zip包并校验
-          ZIP_FILE=$(ls *.zip | head -1)
+          # 找到唯一的 zip 文件
+          ZIP_FILE=$(find . -name "*.zip" -type f | head -1)
           if [ -z "$ZIP_FILE" ]; then
-            echo "Error: No zip file found in repository!"
+            echo "❌ No zip file found!"
             exit 1
           fi
-          echo "Processing zip file: $ZIP_FILE"
+          echo "✅ Found zip: $ZIP_FILE"
+          
           # 解压到临时目录
-          unzip -o "$ZIP_FILE" -d ./temp_source
-          # 进入解压后的项目根目录（处理压缩包内一级文件夹）
-          cd ./temp_source || exit 1
-          PROJECT_DIR=$(find . -name "pubspec.yaml" -type f | dirname | head -1)
-          cd "$PROJECT_DIR" || exit 1
-          # 复制所有源码到仓库根目录
-          cp -r ./* ../../
-          cd ../../
+          unzip -q "$ZIP_FILE" -d temp_unzip
+          
+          # 找到解压后包含 pubspec.yaml 的目录（即项目根）
+          PROJECT_ROOT=$(find temp_unzip -name "pubspec.yaml" -type f | head -1 | xargs dirname)
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "❌ No pubspec.yaml found in zip!"
+            exit 1
+          fi
+          echo "✅ Found project root at: $PROJECT_ROOT"
+          
+          # 把项目所有内容复制到工作目录根
+          cp -R "$PROJECT_ROOT"/* .
+          
           # 删除临时目录
-          rm -rf ./temp_source
+          rm -rf temp_unzip
+          
+          # 打印最终目录结构，确认 ios 目录存在
+          echo "=== Final directory structure ==="
+          ls -la
+          if [ -d "ios" ]; then
+            echo "✅ ios directory found"
+          else
+            echo "❌ ios directory NOT found!"
+            exit 1
+          fi
 
-      # 3. 安装 Flutter 3.19.0（匹配项目Dart版本）
-      - name: Setup Flutter
+      - name: Setup Flutter 3.19.0
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.38.5'
           channel: 'stable'
           cache: true
 
-      # 4. 安装 iOS 核心依赖（CocoaPods）- 修复目录切换
-      - name: Install iOS Dependencies
+      # 3. 安装依赖，确保在正确目录执行 pod install
+      - name: Install Dependencies
         run: |
-          # 升级Ruby环境（解决CocoaPods安装兼容问题）
-          gem update --system --quiet
-          gem install cocoapods --quiet
-          # 安装Flutter依赖
           flutter pub get
-          # 进入ios目录安装Pod依赖（核心步骤）
-          if [ -d "ios" ]; then
-            cd ios
-            pod install --repo-update
-            cd ..
-          else
-            echo "Error: 'ios' directory not found! Project may not be iOS-enabled."
-            exit 1
-          fi
+          
+          # 进入 ios 目录执行 pod install
+          cd ios
+          echo "Current directory: $(pwd)"
+          ls -la  # 确认 Podfile 存在
+          pod install --repo-update
+          cd ..
 
-      # 5. 编译 iOS 模拟器版
+      # 4. 编译 iOS 模拟器版
       - name: Build iOS Simulator App
-        run: |
-          flutter build ios --debug --simulator --verbose
-          # 验证编译产物是否存在
-          if [ ! -d "build/ios/iphonesimulator/Runner.app" ]; then
-            echo "Error: iOS build product not found!"
-            exit 1
-          fi
+        run: flutter build ios --debug --simulator --verbose
 
-      # 6. 打包成 IPA（仅模拟器版）
+      # 5. 打包成 IPA
       - name: Package to IPA
         run: |
-          IPA_DIR=./ipa-output
-          mkdir -p "$IPA_DIR"
-          # 打包Runner.app为IPA
+          mkdir -p ipa_output
           ditto -c -k --sequesterRsrc --keepParent \
             build/ios/iphonesimulator/Runner.app \
-            "$IPA_DIR/hikari-novel-ios-simulator.ipa"
-          echo "IPA generated at: $IPA_DIR/hikari-novel-ios-simulator.ipa"
+            ipa_output/hikari-novel-simulator.ipa
 
-      # 7. 上传 IPA 产物
-      - name: Upload IPA Artifact
+      # 6. 上传产物
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: hikari-novel-ios-ipa
-          path: ipa-output/*.ipa
-          if-no-files-found: error  # 无产物时直接报错，便于排查
+          path: ipa_output/*.ipa
