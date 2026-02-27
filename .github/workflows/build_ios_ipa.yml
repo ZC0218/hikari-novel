@@ -40,7 +40,7 @@ jobs:
           channel: 'stable'
           cache: true
 
-      # 4. 安装 iOS 核心依赖（CocoaPods）
+      # 4. 安装 iOS 核心依赖（CocoaPods）- 修复目录切换
       - name: Install iOS Dependencies
         run: |
           # 升级Ruby环境（解决CocoaPods安装兼容问题）
@@ -49,11 +49,16 @@ jobs:
           # 安装Flutter依赖
           flutter pub get
           # 进入ios目录安装Pod依赖（核心步骤）
-          cd ios || exit 1
-          pod install --repo-update
-          cd ..
+          if [ -d "ios" ]; then
+            cd ios
+            pod install --repo-update
+            cd ..
+          else
+            echo "Error: 'ios' directory not found! Project may not be iOS-enabled."
+            exit 1
+          fi
 
-      # 5. 编译 iOS 模拟器版（删除了冲突的create步骤）
+      # 5. 编译 iOS 模拟器版
       - name: Build iOS Simulator App
         run: |
           flutter build ios --debug --simulator --verbose
