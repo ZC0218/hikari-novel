@@ -1,0 +1,93 @@
+name: Build iOS IPA from Zip
+on:
+  workflow_dispatch:  # 手动触发，避免误操作
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest  # iOS 编译必须用 macOS
+    steps:
+      # 1. 检出仓库（包含你上传的压缩包）
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. 自动解压压缩包（核心：适配任意 zip 文件名）
+      - name: Unzip Source Code (Auto Detect)
+        run: |
+          # 找到仓库中唯一的 zip 包
+          ZIP_FILE=$(ls *.zip | head -1)
+          echo "Found zip file: $ZIP_FILE"
+          # 解压到项目根目录，覆盖原有文件
+          unzip -o "$ZIP_FILE" -d ./temp
+          # 把解压后的源码移动到根目录（处理压缩包内的一级文件夹）
+          mv temp/*/* . || mv temp/* .
+          # 删除临时目录
+          rm -rf temp
+
+      # 3. 安装 Flutter 3.19.0（匹配项目 Dart 3.9+ 要求）
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+          cache: true
+
+      # 4. 安装 iOS 依赖（CocoaPods 必须）
+      - name: Install iOS Dependencies
+        run: |
+          gem install cocoapods --quiet
+          flutter pub get
+          cd ios && pod install && cd ..
+
+      # 5. 生成 iOS 编译模板（项目缺失时自动补全）
+      - name: Generate iOS Project
+        run: flutter create --platforms ios .
+
+      # 6. 编译 iOS 包（分两种模式，按需选择）
+      - name: Build iOS App
+        run: |
+          # 模式1：无开发者账号（默认）→ 生成模拟器 IPA（仅能在 Mac 模拟器运行）
+          flutter build ios --debug --simulator --verbose
+          
+          # 模式2：有开发者账号 → 替换上面一行，生成真实设备 IPA
+          # flutter build ios --release --verbose --no-codesign
+
+      # 7. 打包成 IPA 文件（自动适配编译结果）
+      - name: Package to IPA
+        run: |
+          IPA_DIR=./ipa-output
+          mkdir -p $IPA_DIR
+
+          # 适配模拟器编译结果
+          APP_PATH=build/ios/iphonesimulator/Runner.app
+          if [ -d "$APP_PATH" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$IPA_DIR/hikari-novel-simulator.ipa"
+            echo "模拟器 IPA 已生成：hikari-novel-simulator.ipa"
+          fi
+
+          # 适配真实设备编译结果（有开发者账号时启用）
+          ARCHIVE_PATH=build/ios/archive/Runner.xcarchive
+          if [ -d "$ARCHIVE_PATH" ]; then
+            xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" -exportPath "$IPA_DIR" -exportOptionsPlist <(
+              cat << EOF
+              <?xml version="1.0" encoding="UTF-8"?>
+              <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+              <plist version="1.0">
+              <dict>
+                <key>method</key>
+                <string>ad-hoc</string>
+                <key>signingStyle</key>
+                <string>manual</string>
+              </dict>
+              </plist>
+              EOF
+            )
+            echo "真实设备 IPA 已生成"
+          fi
+
+      # 8. 上传 IPA 供下载
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hikari-novel-ipa
+          path: ipa-output/*.ipa
+          if-no-files-found: warn  # 无文件时仅警告，不失败
